@@ -35,6 +35,9 @@ def handle_error_metric(obj, msg):
 # Constants
 
 Pipeline_Width = 4
+Mem_L1_Hit_Cost = 4
+Mem_L2_Hit_Cost = 12
+# Mem_L3_Hit_Cost = 26 .. 60
 Mem_L3_Weight = 7
 Mem_STLB_Hit_Cost = 7
 BAClear_Cost = 12
@@ -106,8 +109,22 @@ def Backend_Bound_Cycles(self, EV, level):
 def Memory_Bound_Fraction(self, EV, level):
     return (STALLS_MEM_ANY(self, EV, level) + EV("RESOURCE_STALLS.SB", level)) / Backend_Bound_Cycles(self, EV, level)
 
+def L1_Bound_Ratio(self, EV, level):
+    """% of cycles spent on first-level cache access (L1 hits)"""
+    #return (EV("MEM_LOAD_UOPS_RETIRED.L1_HIT", 3) * Mem_L1_Hit_Cost) / CLKS(self, EV, 3)  # that would assume there is no OoO processing
+    return 0  # cannot be computed
+
+def L2_Bound_Ratio(self, EV, level):
+    """% of cycles spent on (demand) second-level cache access (L1 misses that hit L2)"""
+    # should be roughly <= (Mem_L2_Hit_Cost * MEM_LOAD_UOPS_RETIRED.L2_HIT) / CPU_CLK_UNHALTED.THREAD
+    return (EV("CYCLE_ACTIVITY.STALLS_L1D_PENDING", level) - EV("CYCLE_ACTIVITY.STALLS_L2_PENDING", level)) / CLKS(self, EV, level)  # FIXME: missing L1i. may become negative
+
 def Mem_L3_Hit_Fraction(self, EV, level):
     return EV("MEM_LOAD_UOPS_RETIRED.LLC_HIT", level) /(EV("MEM_LOAD_UOPS_RETIRED.LLC_HIT", level) + Mem_L3_Weight * EV("MEM_LOAD_UOPS_MISC_RETIRED.LLC_MISS", level))
+
+def L3_Bound_Ratio(self, EV, level):
+    """% of cycles spent on LLC access (L2 misses that hit LLC)"""
+    return Mem_L3_Hit_Fraction(self, EV, level)* EV("CYCLE_ACTIVITY.STALLS_L2_PENDING", level) / CLKS(self, EV, level)
 
 def Mispred_Clears_Fraction(self, EV, level):
     return EV("BR_MISP_RETIRED.ALL_BRANCHES", level) /(EV("BR_MISP_RETIRED.ALL_BRANCHES", level) + EV("MACHINE_CLEARS.COUNT", level))
@@ -738,35 +755,6 @@ pipeline when many of them get buffered at the same time
             handle_error(self, "Memory_Bound zero division")
         return self.val
 
-class L1_Bound:
-    name = "L1_Bound"
-    domain = "Stalls"
-    area = "BE/Mem"
-    desc = """
-This metric estimates how often the CPU was stalled without
-loads missing the L1 data cache.  The L1 data cache
-typically has the shortest latency.  However; in certain
-cases like loads blocked on older stores; a load might
-suffer due to high latency even though it is being satisfied
-by the L1. Another example is loads who miss in the TLB.
-These cases are characterized by execution unit stalls;
-while some non-completed demand load lives in the machine
-without having that demand load missing the L1 cache."""
-    level = 3
-    htoff = False
-    sample = ['MEM_LOAD_UOPS_RETIRED.L1_HIT:pp', 'MEM_LOAD_UOPS_RETIRED.HIT_LFB:pp']
-    errcount = 0
-    sibling = None
-    server = True
-    metricgroup = ['Cache_Misses', 'Memory_Bound']
-    def compute(self, EV):
-        try:
-            self.val = 0
-            self.thresh = (self.val > 0.1) & self.parent.thresh
-        except ZeroDivisionError:
-            handle_error(self, "L1_Bound zero division")
-        return self.val
-
 class DTLB_Load:
     name = "DTLB_Load"
     domain = "Clocks_Estimated"
@@ -821,6 +809,35 @@ L1_Bound regardless of what memory source satisfied them."""
             handle_error(self, "Lock_Latency zero division")
         return self.val
 
+class L1_Bound:
+    name = "L1_Bound"
+    domain = "Stalls"
+    area = "BE/Mem"
+    desc = """
+This metric estimates how often the CPU was stalled without
+loads missing the L1 data cache.  The L1 data cache
+typically has the shortest latency.  However; in certain
+cases like loads blocked on older stores; a load might
+suffer due to high latency even though it is being satisfied
+by the L1. Another example is loads who miss in the TLB.
+These cases are characterized by execution unit stalls;
+while some non-completed demand load lives in the machine
+without having that demand load missing the L1 cache."""
+    level = 3
+    htoff = False
+    sample = ['MEM_LOAD_UOPS_RETIRED.L1_HIT:pp', 'MEM_LOAD_UOPS_RETIRED.HIT_LFB:pp']
+    errcount = 0
+    sibling = None
+    server = True
+    metricgroup = ['Cache_Misses', 'Memory_Bound']
+    def compute(self, EV):
+        try:
+            self.val = L1_Bound_Ratio(self, EV, 3)
+            self.thresh = (self.val > 0.1) & self.parent.thresh
+        except ZeroDivisionError:
+            handle_error(self, "L1_Bound zero division")
+        return self.val
+
 class L2_Bound:
     name = "L2_Bound"
     domain = "Stalls"
@@ -839,7 +856,7 @@ performance."""
     metricgroup = ['Cache_Misses', 'Memory_Bound']
     def compute(self, EV):
         try:
-            self.val = 0
+            self.val = L2_Bound_Ratio(self, EV, 3)
             self.thresh = (self.val > 0.05) & self.parent.thresh
         except ZeroDivisionError:
             handle_error(self, "L2_Bound zero division")
@@ -863,7 +880,7 @@ the latency and increase performance."""
     metricgroup = ['Cache_Misses', 'Memory_Bound']
     def compute(self, EV):
         try:
-            self.val = Mem_L3_Hit_Fraction(self, EV, 3)* EV("CYCLE_ACTIVITY.STALLS_L2_PENDING", 3) / CLKS(self, EV, 3 )
+            self.val = L3_Bound_Ratio(self, EV, 3)
             self.thresh = (self.val > 0.05) & self.parent.thresh
         except ZeroDivisionError:
             handle_error(self, "L3_Bound zero division")
