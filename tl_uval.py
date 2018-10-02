@@ -22,7 +22,6 @@ TEMPVAL = 'anon'
 def combine_uval(ulist):
     """
     Combine multiple measurements of the same event into one measurement.
-    Uses weighted average.
     """
     combined = None
     if ulist is not None:
@@ -51,11 +50,12 @@ class UVal:
         return "{} [{} +- {}]*{}".format(self.name, self.value, self.stddev, self.samples)
 
     def format_value(self):
+        """string representation of measurement value"""
         if self.value is None: return ""
         if self.is_ratio:
             return "{:>13.2f}".format(self.value * 100.)
         elif self.value > 1000:
-            return "{:,}".format(round(self.value))
+            return "{:,}".format(int(round(self.value)))
         else:
             return "{:13.2f}".format(self.value)
 
@@ -67,11 +67,9 @@ class UVal:
         vs = ""
         if self.stddev is not None:
             if self.is_ratio:
-                if self.value != 0.:
-                    v = self.stddev * 100.
-                else:
-                    v = 0.
-                vs += "{:.2f}".format(v)
+                vs += "{:.2f}".format(self.stddev * 100.)
+            elif self.stddev > 1000:
+                vs += "{:,}".format(int(round(self.stddev)))
             else:
                 vs += "{:6,.2f}".format(self.stddev)
         return vs

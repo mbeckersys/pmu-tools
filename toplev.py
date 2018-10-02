@@ -338,6 +338,7 @@ g.add_argument('--print-group', '-g', help='Print event group assignments',
 g.add_argument('--raw', help="Print raw values", action='store_true')
 g.add_argument('--valcsv', '-V', help='Write raw counter values into CSV file', type=argparse.FileType('w'))
 g.add_argument('--stats', help='Show statistics on what events counted', action='store_true')
+g.add_argument('--absval', help='Show absolute counter values of events', action='store_true')
 g.add_argument('--detailed', '-d', help=argparse.SUPPRESS, action='store_true')
 
 g = p.add_argument_group('Sampling')
@@ -544,8 +545,11 @@ def pwrap_not_quiet(s, linelen=70, indent=""):
     if not args.quiet:
         pwrap(s, linelen, indent)
 
-def has(obj, name):
-    return name in obj.__class__.__dict__
+def has(obj, name, check_instance=False):
+    ret = name in obj.__class__.__dict__
+    if check_instance:
+        ret |= name in obj.__dict__
+    return ret
 
 def flatten(x):
     return itertools.chain(*x)
@@ -1024,9 +1028,13 @@ def compare_event(aname, bname):
     return map_fields(a, fields) == map_fields(b, fields)
 
 def lookup_res(res, rev, ev, obj, env, level, referenced, cpuoff, st):
-    """get measurement result and wrap in UVal"""
+    """
+    Get measurement result and wrap in UVal
 
-    def make_uval(v, sd=0.0, mux=None):
+    FIXME: waste of memory. only create UVal if not exists, yet
+    """
+
+    def make_uval(v, sd=0.0, mux=100.):
         return UVal(name=ev, value=v, stddev=sd, mux=mux)
 
     if ev in env:
@@ -1454,6 +1462,8 @@ class Runner:
         for obj in self.olist:
             obj.evlevels = []
             obj.compute(lambda ev, level: ev_append(ev, level, obj))
+            if args.absval:
+                ev_append('cycles', obj.level, obj)
             obj.evlist = [x[0] for x in obj.evlevels]
             obj.evnum = raw_events(obj.evlist)
             obj.nc = needed_counters(obj.evnum)
@@ -1563,7 +1573,9 @@ class Runner:
                 continue
             ref = set()
             obj.compute(lambda e, level:
-                            lookup_res(res, rev, e, obj, env, level, ref, -1, valstats))
+                        lookup_res(res, rev, e, obj, env, level, ref, -1, valstats))
+            if 'cycles' in obj.evlist:
+                obj.cycles = lookup_res(res, rev, 'cycles', obj, env, obj.level, ref, -1, valstats)
             if stat:
                 stat.referenced |= ref
             if not obj.res_map and not all([x in env for x in obj.evnum]):
@@ -1581,6 +1593,17 @@ class Runner:
         self.propagate_siblings()
 
     def print_res(self, out, timestamp, title, match, bn):
+        def make_uvals(ob):
+            v = ob.val if isinstance(ob.val, UVal) else UVal(ob.name, ob.val)
+            v.name = ob.name
+            av = None
+            if args.absval and has(ob, 'domain') and has(ob, 'cycles', True):
+                if ob.domain in ("Clocks", "Clocks_Estimated", "Stalls"):
+                    av = v * ob.cycles
+                elif ob.domain in ("Slots",) and has(model, 'Pipeline_Width', True):
+                    av = v * model.Pipeline_Width * ob.cycles
+            return v, av
+
         out.logf.flush()
 
         # determine all objects to print
@@ -1606,29 +1629,27 @@ class Runner:
             else:
                 out.set_unit(node_unit(obj))
 
-        def get_uval(ob):
-            u = ob.val if isinstance(ob.val, UVal) else UVal(ob.name, ob.val)
-            u.name = ob.name
-            return u
-
         # step 3: print
         for i, obj in enumerate(olist):
-            val = get_uval(obj)
+            val, absval = make_uvals(obj)
             desc = obj_desc(obj, olist[i + 1:])
             if obj.metric:
                 out.metric(obj.area if has(obj, 'area') else None,
-                        obj.name, val, timestamp,
-                        desc,
-                        title,
-                        metric_unit(obj))
+                           obj.name, val, timestamp,
+                           desc,
+                           title,
+                           metric_unit(obj))
             elif check_ratio(val):
                 out.ratio(obj.area if has(obj, 'area') else None,
-                        full_name(obj), val, timestamp,
-                        node_unit(obj),
-                        desc,
-                        title,
-                        sample_desc(obj.sample) if has(obj, 'sample') else None,
-                        "<==" if obj == bn else "")
+                          full_name(obj),
+                          val,
+                          absval,
+                          timestamp,
+                          node_unit(obj),
+                          desc,
+                          title,
+                          sample_desc(obj.sample) if has(obj, 'sample') else None,
+                          "<==" if obj == bn else "")
                 if obj.thresh or args.verbose:
                     self.sample_obj.add(obj)
 

@@ -40,7 +40,7 @@ class Output:
     def set_cpus(self, cpus):
         pass
 
-    def item(self, area, name, uval, timestamp, remark, desc, title, sample, bn):
+    def item(self, area, name, uval, absval, timestamp, remark, desc, title, sample, bn):
         assert isinstance(uval, UVal)
         # --
         if desc in self.printed_descs:
@@ -49,15 +49,15 @@ class Output:
             self.printed_descs.add(desc)
         if not area:
             area = ""
-        self.show(timestamp, title, area, name, uval, remark, desc, sample, bn)
+        self.show(timestamp, title, area, name, uval, absval, remark, desc, sample, bn)
 
-    def ratio(self, area, name, uval, timestamp, remark, desc, title, sample, bn):
+    def ratio(self, area, name, uval, absval, timestamp, remark, desc, title, sample, bn):
         uval.is_ratio = True
-        self.item(area, name, uval, timestamp, "%" + remark, desc, title, sample, bn)
+        self.item(area, name, uval, absval, timestamp, "%" + remark, desc, title, sample, bn)
 
     def metric(self, area, name, uval, timestamp, desc, title, unit):
         uval.is_metric = True
-        self.item(area, name, uval, timestamp, unit, desc, title, None, "")
+        self.item(area, name, uval, None, timestamp, unit, desc, title, None, "")
 
     def flush(self):
         pass
@@ -107,7 +107,7 @@ class OutputHuman(Output):
     # bn        marker for bottleneck
     # Example:
     # C0    BE      Backend_Bound:                                62.00 %
-    def show(self, timestamp, title, area, hdr, val, remark, desc, sample, bn):
+    def show(self, timestamp, title, area, hdr, val, absval, remark, desc, sample, bn):
         self.print_timestamp(timestamp)
         write = self.logf.write
         if title:
@@ -117,6 +117,9 @@ class OutputHuman(Output):
                                                  val.format_uncertainty(),
                                                  remark,
                                                  width=self.unitlen + 1)
+        if absval is not None:
+            val += "  || {:>16} +- {:>16}".format(absval.format_value(),
+                                                  absval.format_uncertainty())
         if bn:
             val += " " + bn
         write(val + "\n")
@@ -124,7 +127,7 @@ class OutputHuman(Output):
 
     def metric(self, area, name, l, timestamp, desc, title, unit):
         l.is_metric = True
-        self.item(area, name, l, timestamp, unit, desc, title, None, "")
+        self.item(area, name, l, None, timestamp, unit, desc, title, None, "")
 
 def convert_ts(ts):
     if isnan(ts):
@@ -143,16 +146,16 @@ class OutputColumns(OutputHuman):
     def set_cpus(self, cpus):
         self.cpunames = cpus
 
-    def show(self, timestamp, title, area, hdr, val, remark, desc, sample, bn):
+    def show(self, timestamp, title, area, hdr, val, absval, remark, desc, sample, bn):
         if self.args.single_thread:
-            OutputHuman.show(self, timestamp, title, area, hdr, val, remark, desc, sample, bn)
+            OutputHuman.show(self, timestamp, title, area, hdr, val, absval, remark, desc, sample, bn)
             return
         self.timestamp = timestamp
         key = (area, hdr)
         if key not in self.nodes:
             self.nodes[key] = dict()
         assert title not in self.nodes[key]
-        self.nodes[key][title] = (val, remark, desc, sample, bn)
+        self.nodes[key][title] = (val, remark, desc, sample, bn)  # FIXME: use absval
 
     def flush(self):
         VALCOL_LEN = 14
@@ -210,13 +213,13 @@ class OutputColumnsCSV(OutputColumns):
         self.writer.writerow(["# " + version + " on " + cpu.name])
 
     # XXX implement bn
-    def show(self, timestamp, title, area, hdr, val, remark, desc, sample, bn):
+    def show(self, timestamp, title, area, hdr, val, absval, remark, desc, sample, bn):
         self.timestamp = timestamp
         key = (area, hdr)
         if key not in self.nodes:
             self.nodes[key] = dict()
         assert title not in self.nodes[key]
-        self.nodes[key][title] = (val, remark, desc, sample)
+        self.nodes[key][title] = (val, remark, desc, sample)  # FIXME: use absval
 
     def flush(self):
         cpunames = sorted(self.cpunames)
@@ -261,7 +264,7 @@ class OutputCSV(Output):
         self.args = args
         self.writer.writerow(["# " + version + " on " + cpu.name])
 
-    def show(self, timestamp, title, area, hdr, val, remark, desc, sample, bn):
+    def show(self, timestamp, title, area, hdr, val, absval, remark, desc, sample, bn):
         if self.args.no_desc:
             desc = ""
         desc = re.sub(r"\s+", " ", desc)
