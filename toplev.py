@@ -292,6 +292,10 @@ g.add_argument('--cpu', '-C', help=argparse.SUPPRESS)
 g.add_argument('--pid', '-p', help=argparse.SUPPRESS)
 g.add_argument('--core', help='Limit output to cores. Comma list of Sx-Cx-Tx. All parts optional.')
 
+g = p.add_argument_group('Model Selection')
+g.add_argument('--ratio-model',
+               help='Use a user-defined hierarchical model, instead of default one', default=None)
+
 g = p.add_argument_group('Select events')
 g.add_argument('--level', '-l', help='Measure upto level N (max 5)',
                type=int, default=1)
@@ -1721,69 +1725,77 @@ if args.quiet:
         args.no_desc = True
     args.no_util = True
 
+def set_ratio_model(m):
+    """Allows overriding the bottleneck model for the hierarchy/ratios with s.th. user-defined"""
+    if args.ratio_model is None:
+        return m
+    else:
+        import importlib
+        return importlib.import_module(args.ratio_model)
+
 if cpu.cpu == "ivb":
     import ivb_client_ratios
     ivb_client_ratios.smt_enabled = cpu.ht
     smt_mode = cpu.ht
-    model = ivb_client_ratios
+    model = set_ratio_model(ivb_client_ratios)
 elif cpu.cpu == "ivt":
     import ivb_server_ratios
     ivb_server_ratios.smt_enabled = cpu.ht
     smt_mode = cpu.ht
-    model = ivb_server_ratios
+    model = set_ratio_model(ivb_server_ratios)
 elif cpu.cpu == "snb":
     import snb_client_ratios
     snb_client_ratios.smt_enabled = cpu.ht
     smt_mode = cpu.ht
-    model = snb_client_ratios
+    model = set_ratio_model(snb_client_ratios)
 elif cpu.cpu == "jkt":
     import jkt_server_ratios
     jkt_server_ratios.smt_enabled = cpu.ht
     smt_mode = cpu.ht
-    model = jkt_server_ratios
+    model = set_ratio_model(jkt_server_ratios)
 elif cpu.cpu == "hsw":
     import hsw_client_ratios
     hsw_client_ratios.smt_enabled = cpu.ht
     smt_mode = cpu.ht
-    model = hsw_client_ratios
+    model = set_ratio_model(hsw_client_ratios)
 elif cpu.cpu == "hsx":
     import hsx_server_ratios
     hsx_server_ratios.smt_enabled = cpu.ht
     smt_mode = cpu.ht
-    model = hsx_server_ratios
+    model = set_ratio_model(hsx_server_ratios)
 elif cpu.cpu == "bdw":
     import bdw_client_ratios
     bdw_client_ratios.smt_enabled = cpu.ht
     smt_mode = cpu.ht
-    model = bdw_client_ratios
+    model = set_ratio_model(bdw_client_ratios)
 elif cpu.cpu == "bdx":
     import bdx_server_ratios
     bdx_server_ratios.smt_enabled = cpu.ht
     smt_mode = cpu.ht
-    model = bdx_server_ratios
+    model = set_ratio_model(bdx_server_ratios)
 elif cpu.cpu == "skl":
     import skl_client_ratios
     skl_client_ratios.smt_enabled = cpu.ht
     smt_mode = cpu.ht
-    model = skl_client_ratios
+    model = set_ratio_model(skl_client_ratios)
 elif cpu.cpu == "skx":
     import skx_server_ratios
     skx_server_ratios.smt_enabled = cpu.ht
     smt_mode = cpu.ht
-    model = skx_server_ratios
+    model = set_ratio_model(skx_server_ratios)
 elif cpu.cpu == "slm":
     import slm_ratios
-    model = slm_ratios
+    model = set_ratio_model(slm_ratios)
 elif cpu.cpu == "knl":
     import knl_ratios
     knl_ratios.smt_enabled = smt_mode = cpu.ht
-    model = knl_ratios
+    model = set_ratio_model(knl_ratios)
 else:
     ht_warning()
     if detailed_model and not args.quiet:
         print >>sys.stderr, "Sorry, no detailed model for your CPU. Only Level 1 supported."
     import simple_ratios
-    model = simple_ratios
+    model = set_ratio_model(simple_ratios)
 
 version = model.version
 model.print_error = pe
